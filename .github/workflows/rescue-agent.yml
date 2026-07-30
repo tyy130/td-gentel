@@ -1,81 +1,37 @@
-import OpenAI from "openai";
+name: Rescue Agent (Health Check)
 
-async function runRescueCheck() {
-  console.log("🚀 Starting GenTel™ Rescue Agent Check...");
-  let healthy = true;
-  let checksRun = 0;
-  let checksPassed = 0;
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Every 6 hours
+  workflow_dispatch: # Manual trigger
 
-  // 1. Check Database Connection (direct)
-  if (process.env.DATABASE_URL) {
-    checksRun++;
-    try {
-      console.log("📡 Checking Database connection...");
-      const { neon } = await import("@neondatabase/serverless");
-      const sql = neon(process.env.DATABASE_URL);
-      const result = await sql`SELECT 1 as health_check`;
-      console.log("✅ Database is reachable:", result.length > 0 ? "healthy" : "unknown");
-      checksPassed++;
-    } catch (error) {
-      console.error("❌ Database Check Failed:", error);
-      healthy = false;
-    }
-  } else {
-    console.log("⚠️  Skipping Database check (DATABASE_URL not configured)");
-  }
+permissions:
+  contents: read
 
-  // 2. Check OpenAI API
-  if (process.env.OPENAI_API_KEY) {
-    checksRun++;
-    try {
-      console.log("🤖 Checking OpenAI API...");
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      await openai.models.list();
-      console.log("✅ OpenAI API is reachable.");
-      checksPassed++;
-    } catch (error) {
-      console.error("❌ OpenAI Check Failed:", error);
-      healthy = false;
-    }
-  } else {
-    console.log("⚠️  Skipping OpenAI check (OPENAI_API_KEY not configured)");
-  }
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
 
-  // 3. Environment Variable Validation
-  const requiredEnv = [
-    "DATABASE_URL",
-    "OPENAI_API_KEY",
-    "OAUTH_STATE_SECRET"
-  ];
-  
-  const missingVars = requiredEnv.filter(env => !process.env[env]);
-  
-  if (missingVars.length > 0) {
-    console.log("⚠️  Missing environment variables:", missingVars.join(", "));
-    console.log("ℹ️  Configure GitHub secrets for full health monitoring");
-  }
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
 
-  // Summary
-  console.log(`\n📊 Health Check Summary:`);
-  console.log(`   Checks run: ${checksRun}`);
-  console.log(`   Checks passed: ${checksPassed}`);
-  console.log(`   Missing env vars: ${missingVars.length}`);
+    - name: Install dependencies
+      run: npm ci
 
-  if (checksRun === 0) {
-    console.log("\n⚠️  No checks could be run - configure GitHub secrets");
-    console.log("✅ Exiting gracefully (no-op health check)");
-    process.exit(0);
-  }
+    - name: Run Rescue Agent
+      run: npx tsx scripts/rescue-agent.ts
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        OAUTH_STATE_SECRET: ${{ secrets.OAUTH_STATE_SECRET }}
 
-  if (!healthy) {
-    console.error("\n🚨 Health check failed!");
-    process.exit(1);
-  }
-
-  console.log("\n✨ All systems healthy.");
-}
-
-runRescueCheck().catch((err) => {
-  console.error("💥 Fatal error:", err);
-  process.exit(1);
-});
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "🚨 GenTel™ Rescue Agent detected a failure in the production environment!"
